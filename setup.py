@@ -9,7 +9,6 @@ setup(
     author='Department of Biodiversity, Conservation and Attractions',
     author_email='asi@dbca.wa.gov.au',
     license='Apache License, Version 2.0',
-    packages=['dbca_utils'],
     zip_safe=False,
     install_requires=[
         'requests',
