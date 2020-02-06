@@ -1,6 +1,10 @@
 import requests
 import os
-import six
+try:
+    from StringIO import StringIO  # Python 2
+except ImportError:
+    from io import StringIO  # Python 3
+
 
 session_key_header = "X_SESSION_KEY"
 http_session_key_header = "HTTP_{}".format(session_key_header)
@@ -75,7 +79,7 @@ def log(user_request, url, method, data=None, json=None, kwargs=None):
         log_msg += "{}body(data): {}\n".format(' ' * 8, str(data))
 
     if json:
-        json_out = six.StringIO()
+        json_out = StringIO()
         try:
             json_lib.dump(json, json_out, indent=4)
             json_str = "\n".join(

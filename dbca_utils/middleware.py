@@ -3,7 +3,6 @@ from django.conf import settings
 from django.contrib.auth import login, logout, get_user_model
 from django.db.models import signals
 from django.utils.deprecation import MiddlewareMixin
-from django.utils.functional import curry
 
 
 class SSOLoginMiddleware(MiddlewareMixin):
@@ -50,6 +49,15 @@ class SSOLoginMiddleware(MiddlewareMixin):
             user.save()
             user.backend = 'django.contrib.auth.backends.ModelBackend'
             login(request, user)
+
+
+def curry(_curried_func, *args, **kwargs):
+    """Reference: https://docs.djangoproject.com/en/2.2/_modules/django/utils/functional/
+    Deprecated in Django 3.0.
+    """
+    def _curried(*moreargs, **morekwargs):
+        return _curried_func(*args, *moreargs, **{**kwargs, **morekwargs})
+        return _curried
 
 
 class AuditMiddleware(MiddlewareMixin):
