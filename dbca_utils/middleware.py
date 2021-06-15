@@ -3,7 +3,70 @@ from django.conf import settings
 from django.contrib.auth import login, logout, get_user_model
 from django.db.models import signals
 from django.utils.deprecation import MiddlewareMixin
+from django.utils.functional import SimpleLazyObject
+from django.contrib.auth.middleware import AuthenticationMiddleware,get_user
 
+from dbca_utils.utils import env
+
+ENABLE_AUTH2_GROUPS = env("ENABLE_AUTH2_GROUPS",default=False)
+
+def sync_usergroups(user,groups):
+    from django.contrib.auth.models import Group
+    usergroups = [Group.objects.get_or_create(name=name)[0] for name in groups.split(".")] if groups else []
+    usergroups.sort(key=lambda o:o.id)
+    existing_usergroups = list(user.groups.all().order_by("id"))
+    index1 = 0
+    index2 = 0
+    len1 = len(usergroups)
+    len2 = len(existing_usergroups)
+    while True:
+        group1 = usergroups[index1] if index1 < len1 else None
+        group2 = existing_usergroups[index2] if index2 < len2 else None
+        if not group1 and not group2:
+            break
+        if not group1:
+            user.groups.remove(group2)
+            index2 += 1
+        elif not group2:
+            user.groups.add(group1)
+            index1 +=1
+        elif group1.id == group2.id:
+            index1 += 1
+            index2 += 1
+        elif group1.id < group2.id:
+            user.groups.add(group1)
+            index1 +=1
+        else:
+            user.groups.remove(group2)
+            index2 += 1
+
+class SimpleLazyUser(SimpleLazyObject):
+    def __init__(self, func,request,groups):
+        super().__init__(func)
+        self.request = request
+        self.usergroups = groups
+
+    def __getattr__(self,name):
+        if name == "groups":
+            sync_usergroups(self._wrapped,self.usergroups)
+            self.request.session["usergroups"] = self.usergroups
+
+        return super().__getattr__(name)
+
+#overwrite the authentication middleware to add logic to processing user groups
+if ENABLE_AUTH2_GROUPS:
+    original_process_request = AuthenticationMiddleware.process_request
+    def _process_request(self,request):
+        if 'HTTP_X_GROUPS' in request.META :
+            groups = request.META["HTTP_X_GROUPS"] or None
+            existing_groups = request.session.get("usergroups")
+            if groups != existing_groups:
+                #user group is changed.
+                request.user = SimpleLazyUser(lambda: get_user(request),request,groups)
+                return
+        original_process_request(self,request)
+
+    AuthenticationMiddleware.process_request = _process_request
 
 class SSOLoginMiddleware(MiddlewareMixin):
 
@@ -15,12 +78,17 @@ class SSOLoginMiddleware(MiddlewareMixin):
             logout(request)
             return http.HttpResponseRedirect(request.META['HTTP_X_LOGOUT_URL'])
 
+        if 'HTTP_REMOTE_USER' not in request.META or not request.META['HTTP_REMOTE_USER']:
+            #auth2 not enabled
+            return
+
         if VERSION < (2, 0):
             user_auth = request.user.is_authenticated()
         else:
             user_auth = request.user.is_authenticated
 
-        if not user_auth and 'HTTP_REMOTE_USER' in request.META and request.META['HTTP_REMOTE_USER']:
+        if not user_auth:
+            #Not authenticate before
             attributemap = {
                 'username': 'HTTP_REMOTE_USER',
                 'last_name': 'HTTP_X_LAST_NAME',
@@ -49,7 +117,11 @@ class SSOLoginMiddleware(MiddlewareMixin):
             user.save()
             user.backend = 'django.contrib.auth.backends.ModelBackend'
             login(request, user)
-
+            #synchronize the user groups
+            if  ENABLE_AUTH2_GROUPS and "HTTP_X_GROUPS" in request.META:
+                groups = request.META["HTTP_X_GROUPS"] or None
+                sync_usergroups(user,groups)
+                request.session["usergroups"] = groups
 
 def curry(_curried_func, *args, **kwargs):
     """Reference: https://docs.djangoproject.com/en/2.2/_modules/django/utils/functional/

@@ -4,7 +4,7 @@ from setuptools import setup
 
 setup(
     name='dbca-utils',
-    version='1.1.1',
+    version='1.1.2',
     packages=['dbca_utils'],
     description='Utilities for Django/Python apps',
     url='https://github.com/dbca-wa/dbca-utils',
