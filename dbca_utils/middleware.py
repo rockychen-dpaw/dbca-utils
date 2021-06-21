@@ -4,13 +4,14 @@ from django.contrib.auth import login, logout, get_user_model
 from django.db.models import signals
 from django.utils.deprecation import MiddlewareMixin
 from django.utils.functional import SimpleLazyObject
-from django.contrib.auth.middleware import AuthenticationMiddleware,get_user
+from django.contrib.auth.middleware import AuthenticationMiddleware, get_user
 
 from dbca_utils.utils import env
 
-ENABLE_AUTH2_GROUPS = env("ENABLE_AUTH2_GROUPS",default=False)
+ENABLE_AUTH2_GROUPS = env("ENABLE_AUTH2_GROUPS", default=False)
 
-def sync_usergroups(user,groups):
+
+def sync_usergroups(user, groups):
     from django.contrib.auth.models import Group
     usergroups = [Group.objects.get_or_create(name=name)[0] for name in groups.split(",")] if groups else []
     usergroups.sort(key=lambda o:o.id)
@@ -29,57 +30,71 @@ def sync_usergroups(user,groups):
             index2 += 1
         elif not group2:
             user.groups.add(group1)
-            index1 +=1
+            index1 += 1
         elif group1.id == group2.id:
             index1 += 1
             index2 += 1
         elif group1.id < group2.id:
             user.groups.add(group1)
-            index1 +=1
+            index1 += 1
         else:
             user.groups.remove(group2)
             index2 += 1
 
+
 class SimpleLazyUser(SimpleLazyObject):
-    def __init__(self, func,request,groups):
+    def __init__(self, func, request, groups):
         super().__init__(func)
         self.request = request
         self.usergroups = groups
 
-    def __getattr__(self,name):
+    def __getattr__(self, name):
         if name == "groups":
-            sync_usergroups(self._wrapped,self.usergroups)
+            sync_usergroups(self._wrapped, self.usergroups)
             self.request.session["usergroups"] = self.usergroups
 
         return super().__getattr__(name)
 
-#overwrite the authentication middleware to add logic to processing user groups
+
+# overwrite the authentication middleware to add logic to processing user groups
 if ENABLE_AUTH2_GROUPS:
     original_process_request = AuthenticationMiddleware.process_request
-    def _process_request(self,request):
-        if 'HTTP_X_GROUPS' in request.META :
+
+    def _process_request(self, request):
+        if "HTTP_X_GROUPS" in request.META:
             groups = request.META["HTTP_X_GROUPS"] or None
             existing_groups = request.session.get("usergroups")
             if groups != existing_groups:
-                #user group is changed.
-                request.user = SimpleLazyUser(lambda: get_user(request),request,groups)
+                # user group is changed.
+                request.user = SimpleLazyUser(
+                    lambda: get_user(request), request, groups
+                )
                 return
-        original_process_request(self,request)
+        original_process_request(self, request)
 
     AuthenticationMiddleware.process_request = _process_request
 
-class SSOLoginMiddleware(MiddlewareMixin):
 
+class SSOLoginMiddleware(MiddlewareMixin):
     def process_request(self, request):
         User = get_user_model()
 
-        if (request.path.startswith('/logout') or request.path.startswith('/ledger/logout')) \
-                    and 'HTTP_X_LOGOUT_URL' in request.META and request.META['HTTP_X_LOGOUT_URL']:
+        if (
+            (
+                request.path.startswith("/logout")
+                or request.path.startswith("/ledger/logout")
+            )
+            and "HTTP_X_LOGOUT_URL" in request.META
+            and request.META["HTTP_X_LOGOUT_URL"]
+        ):
             logout(request)
-            return http.HttpResponseRedirect(request.META['HTTP_X_LOGOUT_URL'])
+            return http.HttpResponseRedirect(request.META["HTTP_X_LOGOUT_URL"])
 
-        if 'HTTP_REMOTE_USER' not in request.META or not request.META['HTTP_REMOTE_USER']:
-            #auth2 not enabled
+        if (
+            "HTTP_REMOTE_USER" not in request.META
+            or not request.META["HTTP_REMOTE_USER"]
+        ):
+            # auth2 not enabled
             return
 
         if VERSION < (2, 0):
@@ -88,57 +103,71 @@ class SSOLoginMiddleware(MiddlewareMixin):
             user_auth = request.user.is_authenticated
 
         if not user_auth:
-            #Not authenticate before
+            # Not authenticate before
             attributemap = {
-                'username': 'HTTP_REMOTE_USER',
-                'last_name': 'HTTP_X_LAST_NAME',
-                'first_name': 'HTTP_X_FIRST_NAME',
-                'email': 'HTTP_X_EMAIL',
+                "username": "HTTP_REMOTE_USER",
+                "last_name": "HTTP_X_LAST_NAME",
+                "first_name": "HTTP_X_FIRST_NAME",
+                "email": "HTTP_X_EMAIL",
             }
 
             for key, value in attributemap.items():
                 if value in request.META:
                     attributemap[key] = request.META[value]
 
-            if hasattr(settings, 'ALLOWED_EMAIL_SUFFIXES') and settings.ALLOWED_EMAIL_SUFFIXES:
+            if (
+                hasattr(settings, "ALLOWED_EMAIL_SUFFIXES")
+                and settings.ALLOWED_EMAIL_SUFFIXES
+            ):
                 allowed = settings.ALLOWED_EMAIL_SUFFIXES
                 if isinstance(settings.ALLOWED_EMAIL_SUFFIXES, basestring):
                     allowed = [settings.ALLOWED_EMAIL_SUFFIXES]
-                if not any([attributemap['email'].lower().endswith(x) for x in allowed]):
+                if not any(
+                    [attributemap["email"].lower().endswith(x) for x in allowed]
+                ):
                     return http.HttpResponseForbidden()
 
-            if attributemap['email'] and User.objects.filter(email__iexact=attributemap['email']).exists():
-                user = User.objects.filter(email__iexact=attributemap['email'])[0]
-            elif (User.__name__ != 'EmailUser') and User.objects.filter(username__iexact=attributemap['username']).exists():
-                user = User.objects.filter(username__iexact=attributemap['username'])[0]
+            if (
+                attributemap["email"]
+                and User.objects.filter(email__iexact=attributemap["email"]).exists()
+            ):
+                user = User.objects.filter(email__iexact=attributemap["email"])[0]
+            elif (User.__name__ != "EmailUser") and User.objects.filter(
+                username__iexact=attributemap["username"]
+            ).exists():
+                user = User.objects.filter(username__iexact=attributemap["username"])[0]
             else:
                 user = User()
             user.__dict__.update(attributemap)
             user.save()
-            user.backend = 'django.contrib.auth.backends.ModelBackend'
+            user.backend = "django.contrib.auth.backends.ModelBackend"
             login(request, user)
-            #synchronize the user groups
-            if  ENABLE_AUTH2_GROUPS and "HTTP_X_GROUPS" in request.META:
+            # synchronize the user groups
+            if ENABLE_AUTH2_GROUPS and "HTTP_X_GROUPS" in request.META:
                 groups = request.META["HTTP_X_GROUPS"] or None
-                sync_usergroups(user,groups)
+                sync_usergroups(user, groups)
                 request.session["usergroups"] = groups
+
 
 def curry(_curried_func, *args, **kwargs):
     """Reference: https://docs.djangoproject.com/en/2.2/_modules/django/utils/functional/
     Deprecated in Django 3.0.
     """
+
     def _curried(*moreargs, **morekwargs):
         return _curried_func(*args, *moreargs, **{**kwargs, **morekwargs})
-        return _curried
+
+    return _curried
 
 
 class AuditMiddleware(MiddlewareMixin):
     """Adds creator and modifier foreign key refs to any model automatically.
     Ref: https://gist.github.com/mindlace/3918300
     """
+
     def process_request(self, request):
-        if request.method not in ('GET', 'HEAD', 'OPTIONS', 'TRACE'):
-            if hasattr(request, 'user'):
+        if request.method not in ("GET", "HEAD", "OPTIONS", "TRACE"):
+            if hasattr(request, "user"):
                 if VERSION < (2, 0):
                     if request.user.is_authenticated():
                         user = request.user
@@ -151,14 +180,26 @@ class AuditMiddleware(MiddlewareMixin):
                         user = None
 
             set_auditfields = curry(self.set_auditfields, user)
-            signals.pre_save.connect(set_auditfields, dispatch_uid=(self.__class__, request,), weak=False)
+            signals.pre_save.connect(
+                set_auditfields,
+                dispatch_uid=(
+                    self.__class__,
+                    request,
+                ),
+                weak=False,
+            )
 
     def process_response(self, request, response):
-        signals.pre_save.disconnect(dispatch_uid=(self.__class__, request,))
+        signals.pre_save.disconnect(
+            dispatch_uid=(
+                self.__class__,
+                request,
+            )
+        )
         return response
 
     def set_auditfields(self, user, sender, instance, **kwargs):
-        if not getattr(instance, 'creator_id', None):
+        if not getattr(instance, "creator_id", None):
             instance.creator = user
-        if hasattr(instance, 'modifier_id'):
+        if hasattr(instance, "modifier_id"):
             instance.modifier = user
