@@ -13,13 +13,8 @@ ENABLE_AUTH2_GROUPS = env("ENABLE_AUTH2_GROUPS", default=False)
 
 def sync_usergroups(user, groups):
     from django.contrib.auth.models import Group
-
-    usergroups = (
-        [Group.objects.get_or_create(name=name)[0] for name in groups.split(".")]
-        if groups
-        else []
-    )
-    usergroups.sort(key=lambda o: o.id)
+    usergroups = [Group.objects.get_or_create(name=name)[0] for name in groups.split(",")] if groups else []
+    usergroups.sort(key=lambda o:o.id)
     existing_usergroups = list(user.groups.all().order_by("id"))
     index1 = 0
     index2 = 0
