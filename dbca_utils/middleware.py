@@ -9,6 +9,7 @@ from django.contrib.auth.middleware import AuthenticationMiddleware, get_user
 from dbca_utils.utils import env
 
 ENABLE_AUTH2_GROUPS = env("ENABLE_AUTH2_GROUPS", default=False)
+LOCAL_USERGROUPS = env("LOCAL_USERGROUPS", default=[])
 
 
 def sync_usergroups(user, groups):
@@ -31,7 +32,8 @@ def sync_usergroups(user, groups):
         if not group1 and not group2:
             break
         if not group1:
-            user.groups.remove(group2)
+            if group2 not in LOCAL_USERGROUPS:
+                user.groups.remove(group2)
             index2 += 1
         elif not group2:
             user.groups.add(group1)
@@ -43,7 +45,8 @@ def sync_usergroups(user, groups):
             user.groups.add(group1)
             index1 += 1
         else:
-            user.groups.remove(group2)
+            if group2 not in LOCAL_USERGROUPS:
+                user.groups.remove(group2)
             index2 += 1
 
 
