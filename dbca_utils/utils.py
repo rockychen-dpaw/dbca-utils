@@ -33,7 +33,7 @@ def env(key, default=None, required=False, value_type=None):
             if not value:
                 return []
             else:
-                return value.split(",")
+                return [s.strip() for s in value.split(",") if s.strip()]
     elif issubclass(value_type, tuple):
         if isinstance(value, list):
             return tuple(value)
@@ -42,7 +42,7 @@ def env(key, default=None, required=False, value_type=None):
             if not value:
                 return tuple()
             else:
-                return tuple(value.split(","))
+                return tuple([s.strip() for s in value.split(",") if s.strip()])
     elif issubclass(value_type, bool):
         value = str(value).strip()
         if not value:
