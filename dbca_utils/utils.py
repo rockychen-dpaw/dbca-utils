@@ -1,6 +1,5 @@
 import ast
 import os
-__version__ = '1.0.0'
 
 
 def env(key, default=None, required=False, value_type=None):
@@ -48,15 +47,23 @@ def env(key, default=None, required=False, value_type=None):
         value = str(value).strip()
         if not value:
             return False
-        elif value.lower() == 'true':
+        elif value.lower() == "true":
             return True
-        elif value.lower() == 'false':
+        elif value.lower() == "false":
             return False
         else:
-            raise Exception("'{}' is a boolean environment variable, only accept value 'true' ,'false' and '' with case insensitive, but the configured value is '{}'".format(key, value))
+            raise Exception(
+                "'{}' is a boolean environment variable, only accept value 'true' ,'false' and '' with case insensitive, but the configured value is '{}'".format(
+                    key, value
+                )
+            )
     elif issubclass(value_type, int):
         return int(value)
     elif issubclass(value_type, float):
         return float(value)
     else:
-        raise Exception("'{0}' is a {1} environment variable, but {1} is not supported now".format(key, value_type))
+        raise Exception(
+            "'{0}' is a {1} environment variable, but {1} is not supported now".format(
+                key, value_type
+            )
+        )
