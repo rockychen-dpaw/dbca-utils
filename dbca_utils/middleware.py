@@ -21,7 +21,7 @@ def sync_usergroups(user, groups):
         else []
     )
     usergroups.sort(key=lambda o: o.id)
-    existing_usergroups = list(user.groups.all().order_by("id"))
+    existing_usergroups = list(user.groups.exclude(name__in=LOCAL_USERGROUPS).order_by("id"))
     index1 = 0
     index2 = 0
     len1 = len(usergroups)
@@ -32,8 +32,7 @@ def sync_usergroups(user, groups):
         if not group1 and not group2:
             break
         if not group1:
-            if group2 not in LOCAL_USERGROUPS:
-                user.groups.remove(group2)
+            user.groups.remove(group2)
             index2 += 1
         elif not group2:
             user.groups.add(group1)
@@ -45,8 +44,7 @@ def sync_usergroups(user, groups):
             user.groups.add(group1)
             index1 += 1
         else:
-            if group2 not in LOCAL_USERGROUPS:
-                user.groups.remove(group2)
+            user.groups.remove(group2)
             index2 += 1
 
 
