@@ -16,12 +16,12 @@ setup(
     zip_safe=False,
     keywords=['django', 'middleware', 'utility'],
     install_requires=[
-        'Django>=2.1',
+        'Django<2.0',
         'requests',
     ],
     classifiers=[
         'Framework :: Django',
-        'Framework :: Django :: 1.5',
+        'Framework :: Django :: 1',
         'Environment :: Web Environment',
         'Intended Audience :: Developers',
         'Development Status :: 5 - Production/Stable',
