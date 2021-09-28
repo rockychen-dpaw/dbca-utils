@@ -1,3 +1,5 @@
+import itertools
+
 from django import http, VERSION
 from django.conf import settings
 from django.contrib.auth import login, logout, get_user_model
@@ -155,13 +157,13 @@ class SSOLoginMiddleware(MiddlewareMixin):
                 request.session["usergroups"] = groups
 
 
-def curry(_curried_func, *args, **kwargs):
+def curry(_curried_func, *args):
     """Reference: https://docs.djangoproject.com/en/2.2/_modules/django/utils/functional/
     Deprecated in Django 3.0.
     """
 
     def _curried(*moreargs, **morekwargs):
-        return _curried_func(*args, *moreargs, **{**kwargs, **morekwargs})
+        return _curried_func(*itertools.chain(args, moreargs), **morekwargs)
 
     return _curried
 
