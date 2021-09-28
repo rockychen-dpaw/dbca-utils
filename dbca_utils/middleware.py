@@ -4,8 +4,7 @@ from django import http, VERSION
 from django.conf import settings
 from django.contrib.auth import login, logout, get_user_model
 from django.db.models import signals
-from django.utils.deprecation import MiddlewareMixin
-from django.utils.functional import SimpleLazyObject
+from django.utils.functional import SimpleLazyObject,curry
 from django.contrib.auth.middleware import AuthenticationMiddleware, get_user
 
 from dbca_utils.utils import env
@@ -83,7 +82,7 @@ if ENABLE_AUTH2_GROUPS:
     AuthenticationMiddleware.process_request = _process_request
 
 
-class SSOLoginMiddleware(MiddlewareMixin):
+class SSOLoginMiddleware(object):
     def process_request(self, request):
         User = get_user_model()
 
@@ -157,18 +156,7 @@ class SSOLoginMiddleware(MiddlewareMixin):
                 request.session["usergroups"] = groups
 
 
-def curry(_curried_func, *args):
-    """Reference: https://docs.djangoproject.com/en/2.2/_modules/django/utils/functional/
-    Deprecated in Django 3.0.
-    """
-
-    def _curried(*moreargs, **morekwargs):
-        return _curried_func(*itertools.chain(args, moreargs), **morekwargs)
-
-    return _curried
-
-
-class AuditMiddleware(MiddlewareMixin):
+class AuditMiddleware(object):
     """Adds creator and modifier foreign key refs to any model automatically.
     Ref: https://gist.github.com/mindlace/3918300
     """
