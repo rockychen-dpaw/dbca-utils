@@ -1,5 +1,6 @@
 import os
 import importlib
+from collections import OrderedDict
 import logging
 import psutil
 import subprocess
@@ -565,19 +566,25 @@ def harvest_healthdata(request):
                 workloads_changed = True
         elif res.status_code == 599:
             #the server is in good health, add the health data to servers_res
-            data = res.json()
-            if data["status"] == 401:
-                #authentication error, caused by different workload.
+            try:
+                data = res.json()
+                if data["status"] == 401:
+                    #authentication error, caused by different workload.
+                    workloads_changed = True
+                    unreached_servers.append(servername)
+                    servers_res[servername] = (503,"{1}:{2},url={0}".format(url,data["status"],data["message"]))
+                else:
+                    servers_res[servername] = (500,"{1}:{2}. url={0}".format(url,data["status"],data["message"]))
+            except:
                 workloads_changed = True
                 unreached_servers.append(servername)
-                servers_res[servername] = (res.status_code,"{1}:{2},url={0}".format(url,data["status"],data["message"]))
-            else:
-                servers_res[servername] = (res.status_code,"{1}:{2}. url={0}".format(url,data["status"],data["message"]))
+                servers_res[servername] = (503,"Web server is offline.url={0}".format(url))
+
         else:
             #unexpected error, caused by different workload
             workloads_changed = True
             unreached_servers.append(servername)
-            servers_res[servername] = (res.status_code,"{1}:{2},url={0}".format(url,res.status_code,res.text))
+            servers_res[servername] = (500,"{1}:{2},url={0}".format(url,res.status_code,res.text))
 
     for servername in unreached_servers:
         del workloads[servername]
@@ -589,7 +596,7 @@ def harvest_healthdata(request):
 
     return (workloads,servers_res)
 
-OFFLINE_STATUSCODE_LIST = (502,503,504,401,403,-1,-2)
+OFFLINE_STATUSCODE_LIST = (502,503,504,401,403,-1)
 if WORKLOADS > 0 and WORKLOAD_DEPLOYMENT:
     #has a fixed number of workloads and it is a deployment
     WORKLOADNAMES = [get_workloadname(index) for index in range(WORKLOADS)]
@@ -622,6 +629,7 @@ if WORKLOADS > 0 and WORKLOAD_DEPLOYMENT:
 
         assignedworkloads_changed = False
         if len(WORKLOADNAMES) != len(assignedworkloads):
+            #remove the unexisted workloads from assignedworkloads.
             for key in [k for k in assignedworkloads.keys()]:
                 if key == item_version:
                     continue
@@ -643,7 +651,7 @@ if WORKLOADS > 0 and WORKLOAD_DEPLOYMENT:
                         #related server is online.no need to reassign
                         continue
                     elif step == 1:
-                        #step 1 only reassign the assigned workloads
+                        #step 1 only reassign the already assigned workloads
                         if workloadname not in assignedworkloads:
                             continue
                     replacedservername = None
@@ -678,13 +686,20 @@ if WORKLOADS > 0 and WORKLOAD_DEPLOYMENT:
                 save_assignedworkloads(assignedworkloads)
 
         #map the healthdata result to workload. and remove status code
-        result = {}
+        result = OrderedDict()
         for workloadname in WORKLOADNAMES:
             servername = assignedworkloads.get(workloadname)
             if not servername:
-                result[workloadname] = "Can't find an available host for this non-assigned host.registered workloads: {0}, assigned workloads:{1}".format(str_workloads(workloads),assignedworkloads)
+                if settings.DEBUG:
+                    result[workloadname] = "Can't find an available host for this non-assigned host.registered workloads: {0}, assigned workloads:{1}".format(str_workloads(workloads),assignedworkloads)
+                else:
+                    result[workloadname] = "Can't find an available host for this non-assigned host."
             elif servername not in datas:
-                result[workloadname] = "Can't find an available host for this assigned offline host({2}).registered workloads: {0}, assigned workloads:{1}".format(str_workloads(workloads),assignedworkloads,servername)
+                if settings.DEBUG:
+                    result[workloadname] = "Can't find an available host for this assigned offline host({2}).registered workloads: {0}, assigned workloads:{1}".format(str_workloads(workloads),assignedworkloads,servername)
+                else:
+                    result[workloadname] = "Can't find an available host for this assigned offline host({0}).".format(servername)
+
             elif datas[servername][0] == 200:
                 result[workloadname] = datas[servername][1]
                 result[workloadname]["hostname"] = servername
@@ -703,7 +718,7 @@ elif WORKLOADS > 0 and not WORKLOAD_DEPLOYMENT:
     def healthdata_view(request):
         workloads,servers_res = harvest_healthdata(request)
 
-        result = {}
+        result = OrderedDict()
         for servername in WORKLOADNAMES:
             if result in servers_res:
                 result[servername] = servers_res[servername][1]
@@ -713,17 +728,45 @@ elif WORKLOADS > 0 and not WORKLOAD_DEPLOYMENT:
         populate_summary_data(result)
 
         return JsonResponse(result)
-else:
+elif WORKLOAD_DEPLOYMENT:
     def healthdata_view(request):
         workloads,servers_res = harvest_healthdata(request)
 
-        result = {}
+        result = OrderedDict()
         for servername, serverdata in servers_res.items():
+            if serverdata[0] in OFFLINE_STATUSCODE_LIST:
+                continue
             result[servername] = serverdata[1]
 
         populate_summary_data(result)
 
         return JsonResponse(result)
+else:
+    def healthdata_view(request):
+        workloads,servers_res = harvest_healthdata(request)
+
+        #get all workload names
+        workloadnames = [k for k in workloads.keys() if k != item_version ]
+
+        #find the name of the last available workload
+        workloadnames.sort(key=lambda d:int(d[8:]))
+        last_workloadname = next((name for name in reversed(workloadnames) if servers_res.get(name,[503,"Workload is Offline"])[0] not in OFFLINE_STATUSCODE_LSIT ) ,None)
+
+        result = OrderedDict()
+        if last_workloadname:
+            #find the index of the last available workload
+            last_workloadindex = int(last_workloadname[8:])
+
+            #Return the healthdata of the workloads whose index is from 0 to last_workloadindex(include)
+            for i in range(last_workloadindex + 1):
+                servername = get_workloadname(i)
+                serverdata = servers_res.get(servername,[503,"Workload is offline"])
+                result[servername] = serverdata[1]
+
+        populate_summary_data(result)
+
+        return JsonResponse(result)
+
 
 def workload_healthdata_view(request):
     global secret
