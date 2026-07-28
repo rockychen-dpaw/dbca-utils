@@ -24,7 +24,12 @@ classifiers = [
   "Topic :: Software Development :: Libraries :: Python Modules",
 ]
 requires-python = ">=3.12,<4.0"
-dependencies = ["django>=5.2,<6.2", "markupsafe>=3.0.3"]
+dependencies = [
+  "django>=5.2,<6.2",
+  "markupsafe>=3.0",
+  "psutil>=7.2",
+  "requests>=2.33",
+]
 
 [project.urls]
 Homepage = "https://github.com/dbca-wa/dbca-utils"
