@@ -602,9 +602,8 @@ def populate_summary_data(datas):
         if isinstance(serverdata, str):
             summary["workloads_failed"] += 1
             continue
-        summary["processes_total"] += serverdata["resources"]["processes"]
 
-        summary["cpu_total"] += serverdata["resources"]["cpu_total"]
+        summary["processes_total"] += serverdata["resources"]["processes"]
 
         summary["cpu_total"] += serverdata["resources"]["cpu_total"]
         if summary["cpu_min"] is None or summary["cpu_min"] > serverdata["resources"]["cpu_total"]:
