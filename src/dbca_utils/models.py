@@ -39,10 +39,10 @@ class ActiveMixin(models.Model):
         """
         if "force" in kwargs and kwargs["force"]:
             kwargs.pop("force", None)
-            super(ActiveMixin, self).delete(*args, **kwargs)
+            super().delete(*args, **kwargs)
         else:
             self.effective_to = timezone.now()
-            super(ActiveMixin, self).save(*args, **kwargs)
+            super().save(*args, **kwargs)
 
 
 class AuditMixin(models.Model):
@@ -73,7 +73,7 @@ class AuditMixin(models.Model):
         abstract = True
 
     def __init__(self, *args, **kwargs):
-        super(AuditMixin, self).__init__(*args, **kwargs)
+        super().__init__(*args, **kwargs)
         self._initial = {}
         if self.pk:
             for field in self._meta.fields:

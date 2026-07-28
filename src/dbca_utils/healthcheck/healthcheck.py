@@ -161,7 +161,7 @@ def register_webappserver(*args, **kwargs):
                 secret = data[1]
 
         if workloads_changed:
-            # save thw workloads data to cache
+            # save the workload's data to cache
             save_workloads(workloads)
 
     except Exception as ex:
@@ -324,7 +324,7 @@ def get_workload_app_healthdata(perprocess=True):
         curprocpid = os.getpid()
 
     if not rootproc:
-        # the the root proc
+        # the root proc
         # get the pid of the current process
         curproc = psutil.Process(curprocpid)
         # find the parent
