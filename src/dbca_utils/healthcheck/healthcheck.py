@@ -11,7 +11,7 @@ from datetime import datetime
 import psutil
 import requests
 from django.conf import settings
-from django.core.cache import cache
+from django.core.cache import caches
 from django.core.signals import request_started
 from django.http import JsonResponse
 from django.urls import include, path, reverse
@@ -25,12 +25,22 @@ GB = 1024**3
 
 # WORKLOADS means the number of WORKLOADS should be started.
 # If WORKLOADS is dynamic, please don't set it.
+HEALTHCHECK_CACHE = os.environ.get("HEALTHCHECK_CACHE", "default")
 HEALTHCHECK_ENABLED = os.environ.get("HEALTHCHECK_ENABLED", "true").lower() == "true"
-if not HEALTHCHECK_ENABLED:
-    HEALTHCHECK_ENABLED = True if cache else None
+cache = None
+if HEALTHCHECK_ENABLED:
+    if not HEALTHCHECK_CACHE:
+        HEALTHCHECK_ENABLED = False
+    else:
+        try:
+            cache = caches[HEALTHCHECK_CACHE]
+        except:
+            cache = None
+            HEALTHCHECK_ENABLED = False
 
 HEALTHCHECK_SYSTEMDATA_ENABLED = os.environ.get("HEALTHCHECK_SYSTEMDATA_ENABLED", "true").lower() == "true"
 HEALTHCHECK_PROCESSDATA_ENABLED = os.environ.get("HEALTHCHECK_PROCESSDATA_ENABLED", "true").lower() == "true"
+
 
 CACHE_PREFIX = os.environ.get("CACHE_PREFIX", "")
 PORT = int(os.environ.get("WORKLOAD_PORT", 8080))
@@ -102,13 +112,34 @@ def get_local_ip():
         s.close()
     return ip
 
-
+statefulsetname = None
+workloadindex = -1
 hostname = socket.gethostname()
-if WORKLOAD_DEPLOYMENT:
-    registerhostname = hostname
-else:
-    statefulset_hostname_re = re.compile("-(?P<index>\\d+)$")
-    registerhostname = get_workloadname(statefulset_hostname_re.search(hostname).group("index"))
+if not WORKLOAD_DEPLOYMENT:
+    try:
+        statefulsetname,workloadindex = hostname.rsplit("-",1)
+        workloadindex = int(workloadindex)
+    except:
+        WORKLOAD_DEPLOYMENT = True
+        statefulsetname = None
+        workloadindex = -1
+
+def get_workloadindex(name,raise_exception=True):
+    if WORKLOAD_DEPLOYMENT:
+        raise Exception("Not Support")
+
+    try:
+        return int(name.rsplit("-",1)[1])
+    except:
+        if raise_exception:
+            raise Exception("The hostname({}) is not a valid hostname of statefuleset pod".format(name))
+        else:
+            return -1
+
+def get_statefulset_hostname(index):
+    if WORKLOAD_DEPLOYMENT:
+        raise Exception("Not Support")
+    return "{}-{}".format(statefulsetname,index)
 
 ip = get_local_ip()
 
@@ -132,14 +163,14 @@ def register_webappserver(*args, **kwargs):
     try:
         workloads_changed = False
         workloads = cache.get(key_workloads) or {item_version: 0}
-        if registerhostname not in workloads:
+        if hostname not in workloads:
             # not registered by other webservers running in the same workload
             secret = generate_secret()
-            workloads[registerhostname] = [[ip, PORT], secret, 0]
+            workloads[hostname] = [[ip, PORT], secret, 0]
             workloads_changed = True
         else:
             # already registered by other webservers, check whether the data is correct
-            data = workloads[registerhostname]
+            data = workloads[hostname]
             if not isinstance(data[0], list):
                 data[0] = [ip, PORT]
                 workloads_changed = True
@@ -206,7 +237,8 @@ def get_volumes_healthdata():
                 if WORKLOAD_VOLUMES is None:
                     if partition.fstype.lower() not in ("cifs", "nfs", "sshfs", "davfs2"):
                         continue
-                    volumes.append(partition.mountpoint)
+                    else:
+                        volumes.append(partition.mountpoint)
                 elif partition.mountpoint in WORKLOAD_VOLUMES:
                     volumes.append(partition.mountpoint)
 
@@ -420,7 +452,12 @@ def get_workload_healthdata():
             result["system"] = get_workload_system_healthdata()
 
         if WORKLOAD_VOLUMES_ENABLED:
-            result["volumes"] = get_volumes_healthdata()
+            data = get_volumes_healthdata()
+            if data:
+                result["volumes"] = data
+
+        if WORKLOADS > 0:
+            result["hostname"] = hostname
 
         return (200, result)
     except Exception as ex:
@@ -596,12 +633,19 @@ def populate_summary_data(datas):
         "workloads_failed": 0,
     }
     if settings.DEBUG:
-        summary["currentworkload"] = registerhostname
+        summary["currentworkload"] = hostname
 
-    for _, serverdata in datas.items():
+    latest_workload = None
+    for workloadname, serverdata in datas.items():
         if isinstance(serverdata, str):
             summary["workloads_failed"] += 1
             continue
+        if not latest_workload or latest_workload[1]["resources"]["start_time"] < serverdata["resources"]["start_time"]:
+            if latest_workload:
+                latest_workload[0] = serverdata.get("hostname",workloadname)
+                latest_workload[1] = serverdata
+            else:
+                latest_workload = [serverdata.get("hostname",workloadname),serverdata]
         summary["processes_total"] += serverdata["resources"]["processes"]
 
         summary["cpu_total"] += serverdata["resources"]["cpu_total"]
@@ -638,6 +682,9 @@ def populate_summary_data(datas):
 
         summary["workloads_running"] += 1
 
+    if latest_workload:
+        summary["latest_workload"] = {"hostname":latest_workload[0],"start_time":latest_workload[1]["resources"]["start_time"]}
+
     datas["summary"] = summary
 
 
@@ -667,9 +714,9 @@ def harvest_healthdata(request):
     workloads_changed = False
     logger.debug("Get the workloads from cache :{}".format(str_workloads(workloads)))
 
-    if registerhostname not in workloads:
+    if hostname not in workloads:
         secret = generate_secret()
-        workloads[registerhostname] = [[ip, PORT], secret, 0]
+        workloads[hostname] = [[ip, PORT], secret, 0]
         workloads_changed = True
 
     servers_res = {}
@@ -678,7 +725,7 @@ def harvest_healthdata(request):
     for servername, serverdata in workloads.items():
         if servername == item_version:
             continue
-        if servername == registerhostname:
+        if servername == hostname:
             servers_res[servername] = get_workload_healthdata()
             continue
 
@@ -736,7 +783,7 @@ def harvest_healthdata(request):
     for servername in unreached_servers:
         del workloads[servername]
 
-    logger.debug("healthdata harvest result :workloads={}, resources={}".format(workloads, servers_res))
+    logger.debug("healthdata harvest result :workloads={}, resources={}".format(str_workloads(workloads), servers_res))
 
     if workloads_changed:
         save_workloads(workloads, unreached_servers)
@@ -792,8 +839,8 @@ if WORKLOADS > 0 and WORKLOAD_DEPLOYMENT:
                     del assignedworkloads[key]
 
         if reassign_workloads > 0:
-            # Some workloads are not assigned a workload name or are not available
-            # Using the following to replace the exisint one with new one if possible
+            # Some workloads are not assigned a workload or are not available 
+            # Using the following to replace the exising one with new one if possible
             # Step 1: Replace the unavailable server with a new one
             # Step 2: Assign the new server to the missing assignedworkloads(missed in the assignedworkloads before)
             step = 0
@@ -834,10 +881,49 @@ if WORKLOADS > 0 and WORKLOAD_DEPLOYMENT:
                     if reassign_workloads == 0:
                         break
 
-            if assignedworkloads_changed:
-                # save the workloads
-                logger.debug("Save the changed running workloads data({}).".format(assignedworkloads))
-                save_assignedworkloads(assignedworkloads)
+        if any(data[0] == 200 for data in servers_res.values()):
+            #still have some running workloads
+            #maybe have some workloads in terminating status, but still accessible from peer workload
+            #Replace the oldest workload with new one
+            for name,res in servers_res.items():
+                if res[0] != 200:
+                    continue
+                #Find the oldest workload to replace
+                oldworkload = None
+                for workloadname,servername in assignedworkloads.items():
+                    if workloadname == item_version:
+                        continue
+                    if datas[servername][0] != 200:
+                        #the assigned workload is not in good status, replace it 
+                        if oldworkload:
+                            oldworkload[0] = workloadname
+                            oldworkload[1] = servername
+                            oldworkload[2] = datas[servername]
+                        else:
+                            oldworkload = [workloadname,servername,datas[servername]]
+                        break
+                    elif not oldworkload or oldworkload[2][1]["resources"]["start_time"] > datas[servername][1]["resources"]["start_time"]:
+                        if oldworkload:
+                            oldworkload[0] = workloadname
+                            oldworkload[1] = servername
+                            oldworkload[2] = datas[servername]
+                        else:
+                            oldworkload = [workloadname,servername,datas[servername]]
+
+                if oldworkload:
+                    if oldworkload[2][0] != 200 or res[1]["resources"]["start_time"] > oldworkload[2][1]["resources"]["start_time"]:
+                        #old workload is not in good status or it is older than the current one, 
+                        #replace it with the current one
+                        datas[name] = res
+                        assignedworkloads[oldworkload[0]] = name
+                        assignedworkloads_changed = True
+                else:
+                    break
+
+        if assignedworkloads_changed:
+            # save the workloads
+            logger.debug("Save the changed running workloads data({}).".format(assignedworkloads))
+            save_assignedworkloads(assignedworkloads)
 
         # map the healthdata result to workload. and remove status code
         result = OrderedDict()
@@ -864,7 +950,6 @@ if WORKLOADS > 0 and WORKLOAD_DEPLOYMENT:
 
             elif datas[servername][0] == 200:
                 result[workloadname] = datas[servername][1]
-                result[workloadname]["hostname"] = servername
             else:
                 result[workloadname] = "{}: {}".format(servername, datas[servername][1])
 
@@ -875,7 +960,7 @@ if WORKLOADS > 0 and WORKLOAD_DEPLOYMENT:
         return JsonResponse(result)
 
 elif WORKLOADS > 0 and not WORKLOAD_DEPLOYMENT:
-    WORKLOADNAMES = [get_workloadname(index) for index in range(1, WORKLOADS + 1, 1)]
+    WORKLOADNAMES = [(get_workloadname(index),get_statefulset_hostname(index)) for index in range(WORKLOADS)]
 
     def healthdata_view(request):
         """Django view: Return aggregated health data for the whole cluster.
@@ -885,11 +970,14 @@ elif WORKLOADS > 0 and not WORKLOAD_DEPLOYMENT:
         workloads, servers_res = harvest_healthdata(request)
 
         result = OrderedDict()
-        for servername in WORKLOADNAMES:
-            if servername in servers_res:
-                result[servername] = servers_res[servername][1]
+        for servername,hostname in WORKLOADNAMES:
+            if hostname in servers_res:
+                result[servername] = servers_res[hostname][1]
             else:
-                result[servername] = "Workload is offline.workloads={}".format(str_workloads(workloads))
+                if settings.DEBUG:
+                    result[servername] = "The Workload({}) is offline.workloads={}".format(hostname,str_workloads(workloads))
+                else:
+                    result[servername] = "The Workload({}) is offline.".format(hostname)
 
         populate_summary_data(result)
 
@@ -926,7 +1014,7 @@ else:
         workloadnames = [k for k in workloads.keys() if k != item_version]
 
         # find the name of the last available workload
-        workloadnames.sort(key=lambda d: int(d[8:]))
+        workloadnames.sort(key=lambda name: get_workloadindex(name,raise_exception=False))
         last_workloadname = next(
             (
                 name
@@ -939,11 +1027,11 @@ else:
         result = OrderedDict()
         if last_workloadname:
             # find the index of the last available workload
-            last_workloadindex = int(last_workloadname[8:])
+            last_workloadindex = get_workloadindex(last_workloadname,raise_exception=False)
 
             # Return the healthdata of the workloads whose index is from 0 to last_workloadindex(include)
             for i in range(last_workloadindex + 1):
-                servername = get_workloadname(i)
+                servername = get_statefulset_hostname(i)
                 serverdata = servers_res.get(servername, [503, "Workload is offline"])
                 result[servername] = serverdata[1]
 
@@ -969,7 +1057,7 @@ def workload_healthdata_view(request):
 
         if not secret or secret != token:
             workloads = cache.get(key_workloads)
-            data = workloads.get(registerhostname)
+            data = workloads.get(hostname)
             if data:
                 secret = data[1]
 

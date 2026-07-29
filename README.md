@@ -82,13 +82,14 @@ MIDDLEWARE = [
   ### Usage
   - Install the app 'dbca_utils' in INSTALLED_APPS
   - Service Configuration
+      - HEALTHCHECK_CACHE: Optional. the django cache to save healthcheck realted data. default is 'default'; if cache doesn't exist, healthcheck feature will be disabled.
       - HEALTHCHECK_ENABLED: Optional. enable/disable the healthcheck service. default is 'true'
       - CACHE_PREFIX: Optional. used as the prefix of the cache key. default is ''
       - PORT: Optional. The listening port of the web application. default is '8080', used to send request to peer pod instance to get the resouces usage of the peer pod instance.
       - WORKLOADS: Optional. Used if the web app has a fixed replicas.
       - WORKLOAD_DEPLOYMENT: Optional. the workload is deployment if it is true; otherwise it is statefulset. default is 'true'
       - WORKLOAD_FAILED_THRESHOLD: Optional. The number of continuous failed times to decide that a pod is offline.
-      - WORKLOAD_VOLUMES: Optional. can be 'disabled', 'false','automatic' or "," separated volume mounted point. default is "automatic".
+      - WORKLOAD_VOLUMES: Optional. can be 'disabled', 'false','automatic' or "," separated volume mounted point. default is "automatic". Blob storage is not supported.
           - disabled|false: Don't harvest volume usage data
           - automatic: Detect the persistent volume automatically.
           - "," separated volume mounted points: the volume list
