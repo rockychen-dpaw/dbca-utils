@@ -37,7 +37,7 @@ attributemap = {
     "last_name": "HTTP_X_LAST_NAME",
     "first_name": "HTTP_X_FIRST_NAME",
 }
-guest = AnonymousUser()
+guest = models.AnonymousUser()
 
 def sync_usergroups(user, groups=None):
     from django.contrib.auth.models import Group
