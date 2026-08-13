@@ -12,6 +12,28 @@ ENABLE_AUTH2_GROUPS = env("ENABLE_AUTH2_GROUPS", default=False)
 LOCAL_USERGROUPS = env("LOCAL_USERGROUPS", default=[])
 User = get_user_model()
 
+# Optional setting: projects may define logout urls either as
+# a list of strings, or a single string.
+LOGOUT_URLS = env("LOGOUT_URLS",default=["/logout","/admin/logout","/ledger/logout"])
+
+# Optional setting: projects may define accepted user email domains either as
+# a list of strings, or a single string.
+ALLOWED_EMAIL_SUFFIXES = env("ALLOWED_EMAIL_SUFFIX",default=[])
+if ALLOWED_EMAIL_SUFFIXES:
+    if len(ALLOWED_EMAIL_SUFFIXES) == 1:
+        ALLOWED_EMAIL_SUFFIXES = ALLOWED_EMAIL_SUFFIXES[0]
+        f_check_email_suffix = lambda email: email.endswith(ALLOWED_EMAIL_SUFFIXES)
+    else:
+        f_check_email_suffix = lambda email: any(email.endswith(suffix) for suffix in ALLOWED_EMAIL_SUFFIX)
+else:
+    f_check_email_suffix = lambda email: True
+
+attributemap = {
+    "username": "HTTP_REMOTE_USER",
+    "email": "HTTP_X_EMAIL",
+    "last_name": "HTTP_X_LAST_NAME",
+    "first_name": "HTTP_X_FIRST_NAME",
+}
 
 def sync_usergroups(user, groups=None):
     from django.contrib.auth.models import Group
@@ -67,9 +89,8 @@ class SSOLoginMiddleware(MiddlewareMixin):
     def process_request(self, request):
         # Logout headers included with request.
         if (
-            (request.path.startswith("/logout") or request.path.startswith("/admin/logout") or request.path.startswith("/ledger/logout"))
-            and "HTTP_X_LOGOUT_URL" in request.META
-            and request.META["HTTP_X_LOGOUT_URL"]
+            any(request.path.startswith(url) for url in LOGOUT_URLS)
+            and request.META.get("HTTP_X_LOGOUT_URL")
         ):
             logout(request)
             return http.HttpResponseRedirect(request.META["HTTP_X_LOGOUT_URL"])
@@ -86,15 +107,15 @@ class SSOLoginMiddleware(MiddlewareMixin):
         if request.user.is_authenticated and request.user.email != request.META.get("HTTP_X_EMAIL", ""):
             logout(request)
 
+        #check whether request is authenticated by auth2
+        if not request.META.get("HTTP_X_EMAIL", ""):
+            #request is not authenticated by auth2, return directly
+            return
+
+        #Request is authenticated by auth2
         # Request user is not authenticated locally: obtain user attributes from the request.META dict
         # returned by SSO.
         if not request.user.is_authenticated:
-            attributemap = {
-                "username": "HTTP_REMOTE_USER",
-                "email": "HTTP_X_EMAIL",
-                "last_name": "HTTP_X_LAST_NAME",
-                "first_name": "HTTP_X_FIRST_NAME",
-            }
             attributes = {"username": ""}
 
             for key, meta_value in attributemap.items():
@@ -110,20 +131,8 @@ class SSOLoginMiddleware(MiddlewareMixin):
                 attributes["last_name"] = strip_tags(attributes["last_name"])
                 attributes["last_name"] = str(escape(attributes["last_name"]))
 
-            # Optional setting: projects may define accepted user email domains either as
-            # a list of strings, or a single string.
-            if hasattr(settings, "ALLOWED_EMAIL_SUFFIXES") and settings.ALLOWED_EMAIL_SUFFIXES:
-                if isinstance(settings.ALLOWED_EMAIL_SUFFIXES, str):
-                    # If configured as a string, ALLOWED_EMAIL_SUFFIXES must be a comma-separated list (single-item list is OK).
-                    allowed_email_suffixes = settings.ALLOWED_EMAIL_SUFFIXES.split(",")
-                else:
-                    allowed_email_suffixes = settings.ALLOWED_EMAIL_SUFFIXES
-                # Validation: allowed_email_suffixes must be a list of strings.
-                if not (isinstance(allowed_email_suffixes, list) and all(isinstance(x, str) for x in allowed_email_suffixes)):
-                    raise ValueError("ALLOWED_EMAIL_SUFFIXES must be a list of strings")
-                # If the user email suffix is not in the allowed list, return a 404 response.
-                if not any([attributes["email"].lower().endswith(suffix.lower().strip()) for suffix in allowed_email_suffixes]):
-                    return http.HttpResponseForbidden()
+            if not f_check_email_suffix(attributes["email"].lower()):
+                return http.HttpResponseForbidden()
 
             # Check for an existing User instance.
             if attributes["email"] and User.objects.filter(email__iexact=attributes["email"]).exists():
