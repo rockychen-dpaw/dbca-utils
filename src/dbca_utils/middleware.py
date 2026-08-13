@@ -1,6 +1,6 @@
 from django import http
 from django.conf import settings
-from django.contrib.auth import get_user_model, login, logout
+from django.contrib.auth import get_user_model, login, logout,models
 from django.utils import timezone
 from django.utils.deprecation import MiddlewareMixin
 from django.utils.html import strip_tags
@@ -37,6 +37,7 @@ attributemap = {
     "last_name": "HTTP_X_LAST_NAME",
     "first_name": "HTTP_X_FIRST_NAME",
 }
+guest = AnonymousUser()
 
 def sync_usergroups(user, groups=None):
     from django.contrib.auth.models import Group
@@ -112,7 +113,8 @@ class SSOLoginMiddleware(MiddlewareMixin):
 
         #check whether request is authenticated by auth2
         if not request.META.get("HTTP_X_EMAIL", ""):
-            #request is not authenticated by auth2, return directly
+            #request is not authenticated by auth2, attach the guest to request object
+            request.user = guest
             return
 
         #Request is authenticated by auth2
@@ -138,11 +140,15 @@ class SSOLoginMiddleware(MiddlewareMixin):
                 return http.HttpResponseForbidden()
 
             # Check for an existing User instance.
-            if attributes["email"] and User.objects.filter(email__iexact=attributes["email"]).exists():
-                user = User.objects.filter(email__iexact=attributes["email"]).first()
-            elif User.__name__ != "EmailUser" and User.objects.filter(username__iexact=attributes["username"]).exists():
+            #try to find the user with email address
+            user = User.objects.filter(email__iexact=attributes["email"]).first()
+
+            #if not found, try to find the user with username
+            if not user and User.__name__ != "EmailUser":
                 user = User.objects.filter(username__iexact=attributes["username"]).first()
-            else:
+
+            #if still not found, create an empty user instance
+            if not user:
                 user = User(last_login=timezone.localtime())
 
             # Set the user's details from the supplied information.
