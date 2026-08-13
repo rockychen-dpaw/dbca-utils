@@ -1,10 +1,8 @@
 from django import http
 from django.conf import settings
 from django.contrib.auth import get_user_model, login, logout
-from django.contrib.auth.middleware import AuthenticationMiddleware, get_user
 from django.utils import timezone
 from django.utils.deprecation import MiddlewareMixin
-from django.utils.functional import SimpleLazyObject
 from django.utils.html import strip_tags
 from markupsafe import escape
 
@@ -50,37 +48,6 @@ def sync_usergroups(user, groups=None):
         else:
             user.groups.remove(group2)
             index2 += 1
-
-
-class SimpleLazyUser(SimpleLazyObject):
-    def __init__(self, func, request, groups):
-        super().__init__(func)
-        self.request = request
-        self.usergroups = groups
-
-    def __getattr__(self, name):
-        if name == "groups":
-            sync_usergroups(self._wrapped, self.usergroups)
-            self.request.session["usergroups"] = self.usergroups
-
-        return super().__getattr__(name)
-
-
-# Monkey patch AuthenticationMiddleware to add logic to process user groups.
-if ENABLE_AUTH2_GROUPS:
-    original_process_request = AuthenticationMiddleware.process_request
-
-    def _process_request(self, request):
-        if "HTTP_X_GROUPS" in request.META:
-            groups = request.META["HTTP_X_GROUPS"] or None
-            existing_groups = request.session.get("usergroups")
-            if groups != existing_groups:
-                # User group is changed.
-                request.user = SimpleLazyUser(lambda: get_user(request), request, groups)
-                return
-        original_process_request(self, request)
-
-    AuthenticationMiddleware.process_request = _process_request
 
 
 class SSOLoginMiddleware(MiddlewareMixin):
@@ -180,8 +147,10 @@ class SSOLoginMiddleware(MiddlewareMixin):
             # Log the user in.
             login(request, user)
 
-            # Synchronize the user groups.
-            if ENABLE_AUTH2_GROUPS and "HTTP_X_GROUPS" in request.META:
-                groups = request.META["HTTP_X_GROUPS"] or None
-                sync_usergroups(user, groups)
+        # Synchronize Auth2 user groups if enabled.
+        if ENABLE_AUTH2_GROUPS and "HTTP_X_GROUPS" in request.META:
+            groups = request.META["HTTP_X_GROUPS"] or None
+            if groups != request.session.get("usergroups"):
+                if request.user.is_authenticated:
+                    sync_usergroups(request.user, groups)
                 request.session["usergroups"] = groups
