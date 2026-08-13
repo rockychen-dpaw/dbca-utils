@@ -1,9 +1,10 @@
 import os
 import random
 import string
+from unittest.mock import patch
 
 import pytest
-from django.contrib.auth.models import User
+from django.contrib.auth.models import Group, User
 from django.test import TestCase
 from django.test.client import Client
 from django.urls import reverse
@@ -157,3 +158,76 @@ class SSOLoginMiddlewareTest(TestCase):
         user = User.objects.get(email="testuser@email.com")
         self.assertEqual(user.first_name, "Test")
         self.assertEqual(user.last_name, "User")
+
+
+class SSOLoginMiddlewareGroupTest(TestCase):
+    client = Client()
+
+    def setUp(self):
+        self.user = User.objects.create_user(username="testuser", email="testuser@email.com")
+        self.client.logout()
+
+    @patch("dbca_utils.middleware.ENABLE_AUTH2_GROUPS", True)
+    def test_sso_login_creates_and_syncs_groups(self):
+        """Test that SSO login creates groups and assigns them to the user."""
+        url = reverse("test_model_list")
+        response = self.client.get(
+            url,
+            HTTP_REMOTE_USER="testuser",
+            HTTP_X_EMAIL="testuser@email.com",
+            HTTP_X_GROUPS="group1,group2",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Authenticated: True")
+        self.user.refresh_from_db()
+        self.assertEqual(
+            sorted(self.user.groups.values_list("name", flat=True)),
+            ["group1", "group2"],
+        )
+        self.assertEqual(self.client.session.get("usergroups"), "group1,group2")
+
+    @patch("dbca_utils.middleware.ENABLE_AUTH2_GROUPS", True)
+    def test_group_sync_updates_on_header_change(self):
+        """Test that group membership is updated when the HTTP_X_GROUPS header changes."""
+        url = reverse("test_model_list")
+        self.client.get(
+            url,
+            HTTP_REMOTE_USER="testuser",
+            HTTP_X_EMAIL="testuser@email.com",
+            HTTP_X_GROUPS="group1,group2",
+        )
+        self.user.refresh_from_db()
+        self.assertEqual(
+            sorted(self.user.groups.values_list("name", flat=True)),
+            ["group1", "group2"],
+        )
+
+        self.client.get(
+            url,
+            HTTP_REMOTE_USER="testuser",
+            HTTP_X_EMAIL="testuser@email.com",
+            HTTP_X_GROUPS="group2,group3",
+        )
+        self.user.refresh_from_db()
+        self.assertEqual(
+            sorted(self.user.groups.values_list("name", flat=True)),
+            ["group2", "group3"],
+        )
+
+    @patch("dbca_utils.middleware.LOCAL_USERGROUPS", ["local_group"])
+    @patch("dbca_utils.middleware.ENABLE_AUTH2_GROUPS", True)
+    def test_group_sync_preserves_local_groups(self):
+        """Test that groups listed in LOCAL_USERGROUPS are not removed."""
+        local_group = Group.objects.create(name="local_group")
+        self.user.groups.add(local_group)
+        url = reverse("test_model_list")
+        response = self.client.get(
+            url,
+            HTTP_REMOTE_USER="testuser",
+            HTTP_X_EMAIL="testuser@email.com",
+            HTTP_X_GROUPS="sso_group",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.user.refresh_from_db()
+        group_names = sorted(self.user.groups.values_list("name", flat=True))
+        self.assertEqual(group_names, ["local_group", "sso_group"])
