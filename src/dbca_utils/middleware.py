@@ -20,13 +20,16 @@ LOGOUT_URLS = env("LOGOUT_URLS",default=["/logout","/admin/logout","/ledger/logo
 # a list of strings, or a single string.
 ALLOWED_EMAIL_SUFFIXES = env("ALLOWED_EMAIL_SUFFIX",default=[])
 if ALLOWED_EMAIL_SUFFIXES:
+    if any(not isinstance(suffix,str) for suffix in ALLOWED_EMAIL_SUFFIXES):
+        raise ValueError("ALLOWED_EMAIL_SUFFIXES must be a list of strings")
+
     if len(ALLOWED_EMAIL_SUFFIXES) == 1:
         ALLOWED_EMAIL_SUFFIXES = ALLOWED_EMAIL_SUFFIXES[0]
         f_check_email_suffix = lambda email: email.endswith(ALLOWED_EMAIL_SUFFIXES)
     else:
         f_check_email_suffix = lambda email: any(email.endswith(suffix) for suffix in ALLOWED_EMAIL_SUFFIX)
 else:
-    f_check_email_suffix = lambda email: True
+    f_check_email_suffix = None
 
 attributemap = {
     "username": "HTTP_REMOTE_USER",
@@ -131,7 +134,7 @@ class SSOLoginMiddleware(MiddlewareMixin):
                 attributes["last_name"] = strip_tags(attributes["last_name"])
                 attributes["last_name"] = str(escape(attributes["last_name"]))
 
-            if not f_check_email_suffix(attributes["email"].lower()):
+            if f_check_email_suffix and not f_check_email_suffix(attributes["email"].lower()):
                 return http.HttpResponseForbidden()
 
             # Check for an existing User instance.
